@@ -1,0 +1,12 @@
+# NI Packages
+ds-general==4.4.99
+ds-logging==3.0.14
+ds-modeling==5.1.304
+ds-common==2.0.1
+ds-aws-services==2.5.132
+
+numpy==1.26.4
+pandas==2.2.1
+pyarrow
+matplotlib
+boto3
