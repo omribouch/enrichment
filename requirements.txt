@@ -10,3 +10,4 @@ pandas==2.2.1
 pyarrow
 matplotlib
 boto3
+seaborn
