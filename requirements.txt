@@ -5,6 +5,7 @@ ds-modeling==5.1.304
 ds-common==2.0.1
 ds-aws-services==2.5.132
 
+ds_modeling==5.1.304
 numpy==1.26.4
 pandas==2.2.1
 pyarrow
