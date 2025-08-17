@@ -21,6 +21,25 @@ class Biz2CreditDataHandler:
         self.df_processed = None
         self.feature_columns = None
         self.target_column = 'sales_count'
+        
+        # Define essential features that will be used by the models
+        self.essential_features = [
+            # Core features needed for p_sale calculation
+            'normalized_p_cr_lead', 'normalized_p_cr_sale', 'p_cr_lead', 'p_cr_sale',
+            'leads_count', 'sales_count',
+            
+            # Enrichment features
+            'age_of_business_months', 'application_annual_revenue', 'business_legal_structure',
+            
+            # New features from query
+            'network', 'time_to_clickout_s', 'time_to_clickout_s_group',
+            
+            # Additional features that might be needed
+            'channel_click_id', 'visit_iid',
+            
+            # Date column needed for time series CV
+            'clickout_date_prt'
+        ]
 
     def get_data(
         self,
@@ -108,21 +127,30 @@ prediction_data AS (
                                 max(agent_os) as agent_os,
                                 max(pli_vertical_name) as pli_vertical_name,
                                 min(conversion_month_prt) as conversion_month_prt,
-                                min(clickout_date_prt) clickout_date_prt,
-                                min (visit_timestamp) AS visit_timestamp,
-                                max (normalized_p_cr_lead) AS normalized_p_cr_lead,
-                                Max (avg_conversion_lag_sale) AS avg_conversion_lag_sale,
-                                max (normalized_p_cr_sale) AS normalized_p_cr_sale,
-                                min (p_conversion_time_sale) AS p_conversion_time_sale,
-                                Max (predicted_commission) AS predicted_commission,
-                                max (estimated_earnings_usd) AS estimated_earnings_usd,
-                                max (estimated_conversions) AS estimated_conversions,
-                                max (conversion_count) AS conversion_count,
-                                max (leads_count) AS leads_count,
-                                max (qualified_leads_count) AS qualified_leads_count,
-                                max (sales_count) AS sales_count,
+                                min(clickout_date_prt) as clickout_date_prt,
+                                min(visit_timestamp) AS visit_timestamp,
+                                max(normalized_p_cr_lead) AS normalized_p_cr_lead,
+                                max(avg_conversion_lag_sale) AS avg_conversion_lag_sale,
+                                max(normalized_p_cr_sale) AS normalized_p_cr_sale,
+                                min(p_conversion_time_sale) AS p_conversion_time_sale,
+                                max(predicted_commission) AS predicted_commission,
+                                max(estimated_earnings_usd) AS estimated_earnings_usd,
+                                max(estimated_conversions) AS estimated_conversions,
+                                max(conversion_count) AS conversion_count,
+                                max(leads_count) AS leads_count,
+                                max(qualified_leads_count) AS qualified_leads_count,
+                                max(sales_count) AS sales_count,
                                 max(p_cr_lead) as p_cr_lead,
-                                max(p_cr_sale) AS p_cr_sale
+                                max(p_cr_sale) AS p_cr_sale,
+                                max(coalesce(network,'x')) as network,
+                                max(date_diff('second', visit_timestamp, clickout_timestamp)) as time_to_clickout_s,
+                                case 
+                                    when max(date_diff('second', visit_timestamp, clickout_timestamp)) < 10 then '<10'
+                                    when max(date_diff('second', visit_timestamp, clickout_timestamp)) >= 10 and max(date_diff('second', visit_timestamp, clickout_timestamp)) < 30 then '10=<Second<30'  
+                                    when max(date_diff('second', visit_timestamp, clickout_timestamp)) >= 30 and max(date_diff('second', visit_timestamp, clickout_timestamp)) < 60 then '30=<Second<60'  
+                                    else '>=60' 
+                                end as time_to_clickout_s_group
+
 FROM dlk_mlmodels_production.v_multilabel_conversions_predictions_fast_longer
 WHERE product_id = {product_id}
   AND vertical_id = '{vertical_id}'
@@ -179,7 +207,12 @@ on (p.channel_click_id = en.en_channel_click_id and p.visit_iid = en.en_visit_ii
                 print(f"Sales rate: {self.df_raw['sales_count'].sum()/self.df_raw['leads_count'].sum()*100:.2f}%" if 'sales_count' in self.df_raw.columns else 'N/A')
             
             print(f"✅ Data loaded and filtered successfully: {self.df_raw.shape}")
-            print(f"Columns: {list(self.df_raw.columns)}")
+            
+            # Filter to only essential columns
+            self._filter_to_essential_features()
+            
+            # Create missing time-based features
+            # self._create_time_based_features()
             
             # Show data summary
             self._show_data_summary()
@@ -192,6 +225,68 @@ on (p.channel_click_id = en.en_channel_click_id and p.visit_iid = en.en_visit_ii
             print("Full error traceback:")
             traceback.print_exc()
             raise
+    
+    def _filter_to_essential_features(self):
+        """
+        Filter the raw data to only include essential features needed for modeling
+        """
+        print(f"\n=== FILTERING TO ESSENTIAL FEATURES ===")
+        initial_shape = self.df_raw.shape
+        
+        # Get columns that actually exist in the data
+        available_features = [col for col in self.essential_features if col in self.df_raw.columns]
+        missing_features = [col for col in self.essential_features if col not in self.df_raw.columns]
+        
+        print(f"Essential features found: {len(available_features)}/{len(self.essential_features)}")
+        if missing_features:
+            print(f"Missing features: {missing_features}")
+        
+        # Filter to only essential columns + any additional columns that might be needed
+        columns_to_keep = available_features.copy()
+        
+        # Add target column if not already included
+        if self.target_column not in columns_to_keep:
+            columns_to_keep.append(self.target_column)
+        
+        # Filter the dataframe
+        self.df_raw = self.df_raw[columns_to_keep]
+        
+        # Additional cleaning: remove any remaining problematic columns
+        print(f"\n=== ADDITIONAL DATA CLEANING ===")
+        
+        # Handle clickout_date_prt - convert to datetime and keep for time series CV
+        if 'clickout_date_prt' in self.df_raw.columns:
+            try:
+                self.df_raw['clickout_date_prt'] = pd.to_datetime(self.df_raw['clickout_date_prt'])
+                print(f"Converted clickout_date_prt to datetime")
+            except Exception as e:
+                print(f"Warning: Could not convert clickout_date_prt to datetime: {e}")
+                # If conversion fails, remove the column
+                self.df_raw = self.df_raw.drop(columns=['clickout_date_prt'])
+                print(f"Removed clickout_date_prt due to conversion failure")
+        
+        # Remove other datetime columns (but keep clickout_date_prt)
+        datetime_cols = self.df_raw.select_dtypes(include=['datetime64']).columns.tolist()
+        datetime_cols = [col for col in datetime_cols if col != 'clickout_date_prt']
+        if datetime_cols:
+            print(f"Removing other datetime columns: {datetime_cols}")
+            self.df_raw = self.df_raw.drop(columns=datetime_cols)
+        
+        # Remove object columns (except business_legal_structure which will be encoded)
+        object_cols = self.df_raw.select_dtypes(include=['object']).columns.tolist()
+        # Keep business_legal_structure and the 3 additional features for encoding
+        object_cols_to_keep = ['business_legal_structure', 'network', 'time_to_clickout_s_group']
+        object_cols_to_remove = [col for col in object_cols if col not in object_cols_to_keep]
+        
+        if object_cols_to_keep:
+            print(f"  Keeping {len(object_cols_to_keep)} object columns for pipeline processing: {object_cols_to_keep}")
+        
+        if object_cols_to_remove:
+            self.df_raw = self.df_raw.drop(columns=object_cols_to_remove)
+            print(f"  Removed {len(object_cols_to_remove)} object columns: {object_cols_to_remove}")
+        
+        print(f"  ✅ Data ready for pipeline processing - transformers will handle feature engineering")
+    
     
     def _show_data_summary(self):
         """
@@ -372,42 +467,3 @@ on (p.channel_click_id = en.en_channel_click_id and p.visit_iid = en.en_visit_ii
             print(f"  Nulls: {info['null_count']} ({info['null_percentage']:.1f}%)")
             print(f"  Unique values: {info['unique_count']}")
             print(f"  Numeric: {info['is_numeric']}")
-
-
-# def main():
-#     """
-#     Test the data handler
-#     """
-#     print("🧪 Testing Biz2Credit Data Handler")
-#     print("=" * 50)
-    
-#     # Create data handler
-#     handler = Biz2CreditDataHandler()
-    
-#     try:
-#         # Load data
-#         df = handler.load_data()
-        
-#         # Get basic info
-#         basic_info = handler.get_basic_info()
-#         print(f"\nBasic info: {basic_info['shape']} rows, {basic_info['memory_usage']:.2f} MB")
-        
-#         # Get target info
-#         target_info = handler.get_target_info()
-#         print(f"\nTarget info: {target_info['null_count']} nulls, {len(target_info['value_counts'])} unique values")
-        
-#         # Show feature info
-#         handler.show_feature_info()
-        
-#         print("\n✅ Data handler test completed successfully!")
-#         print("Note: This handler only loads data and provides info.")
-#         print("Feature processing and modeling are handled by transformers and pipeline.")
-        
-#     except Exception as e:
-#         print(f"❌ Data handler test failed: {e}")
-#         import traceback
-#         traceback.print_exc()
-
-
-# if __name__ == "__main__":
-#     main()
