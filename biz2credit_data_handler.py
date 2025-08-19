@@ -50,15 +50,6 @@ class Biz2CreditDataHandler:
         vertical_id: str = '64e33e7be3cbc4ce1041a30f',
         clickout_date_prt: str = '2025-01-01'
     ) -> pd.DataFrame:
-        # Add debug printing to see parameter values
-        print(f"=== SQL QUERY PARAMETERS ===")
-        print(f"partner_id: {partner_id} (type: {type(partner_id)})")
-        print(f"product_id: {product_id} (type: {type(product_id)})")
-        print(f"process_name: {process_name} (type: {type(process_name)})")
-        print(f"transaction_month_prt: {transaction_month_prt} (type: {type(transaction_month_prt)})")
-        print(f"vertical_id: {vertical_id} (type: {type(vertical_id)})")
-        print(f"clickout_date_prt: {clickout_date_prt} (type: {type(clickout_date_prt)})")
-        
         query_biz = f"""
     WITH enrichment_data AS (
     SELECT 
@@ -171,7 +162,15 @@ on (p.channel_click_id = en.en_channel_click_id and p.visit_iid = en.en_visit_ii
         df_biz_enrich = pd.DataFrame(raw)
         return df_biz_enrich
 
-    def load_data(self) -> pd.DataFrame:
+    def load_data(
+        self,
+        partner_id: int = 13589,
+        product_id: int = 13465,
+        process_name: str = 'bi_biz2credit_lead',
+        transaction_month_prt: str = '2025-01',
+        vertical_id: str = '64e33e7be3cbc4ce1041a30f',
+        clickout_date_prt: str = '2025-01-01'
+    ) -> pd.DataFrame:
         """
         Load Biz2Credit data using your SQL query
         """

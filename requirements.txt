@@ -54,3 +54,6 @@ mo-sql-parsing==11.658.24326
 ml-infra==0.0.60
 mypy==1.9.0
 mypy-extensions==1.0.0
+
+# SHAP for feature importance analysis
+shap==0.44.0

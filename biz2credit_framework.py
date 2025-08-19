@@ -10,8 +10,25 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+from sklearn.base import clone
 
-# ds_modeling framework imports
+# ds_modeling wrapper models (only import what works)
+try:
+    from ds_modeling.ml_framework.prdictors_wrappers.classifiers.linear import SkLogisticRegression
+    DS_MODELING_AVAILABLE = True
+except ImportError:
+    DS_MODELING_AVAILABLE = False
+    print("⚠️ ds_modeling wrapper models not available - using sklearn models only")
+
+# Import standard XGBoost instead of wrapper
+try:
+    from xgboost import XGBClassifier
+    XGB_AVAILABLE = True
+    print("✅ XGBoost available in framework - using standard XGBClassifier")
+except ImportError as e:
+    XGB_AVAILABLE = False
+    print(f"⚠️ XGBoost not available in framework: {e}")
+
 from ds_modeling.ml_framework.base import Transformer
 from ds_modeling.ml_framework.pipeline import Pipeline
 from biz2credit_transformers import Biz2CreditPrep1, Biz2CreditImputer
@@ -139,25 +156,22 @@ def run_pre_analysis(df):
 # STAGE 2: FEATURE ANALYSIS FUNCTIONS
 # ============================================================================
 
-def run_raw_feature_visualizations(df):
+def run_raw_feature_visualizations(df): #empty function right now
     """
     Analyze raw features (disabled for performance)
     """
     print("=== RAW FEATURE ANALYSIS ===")
-    print("Feature analysis disabled for performance: run_raw_feature_visualizations")
-    print("Focusing on data flow analysis and debugging")
+    print("Feature analysis disabled for performance")
     return None
 
 
-def run_transformed_feature_visualizations(df):
+def run_transformed_feature_visualizations(df): #empty function right now
     """
     Analyze transformed features (disabled for performance)
     """
     print("=== TRANSFORMED FEATURE ANALYSIS ===")
-    print("Feature analysis disabled for performance: run_transformed_feature_visualizations")
-    print("Focusing on data flow analysis and debugging")
+    print("Feature analysis disabled for performance")
     return None
-
 
 # ============================================================================
 # STAGE 4: TIME SERIES CROSS-VALIDATION FUNCTIONS
@@ -415,8 +429,29 @@ def _perform_feature_importance_analysis(pipeline_fitted, X_test, y_test, pipeli
             'RandomForest' in str(type(model)),
             'GradientBoosting' in str(type(model)),
             'XGB' in str(type(model)),
-            'LGBM' in str(type(model))
+            'LGBM' in str(type(model)),
+            'SkRandomForest' in str(type(model)),  # ds_modeling wrapper
+            'XgBoost' in str(type(model)),         # ds_modeling wrapper
+            'SkLogisticRegression' in str(type(model))  # ds_modeling wrapper (for completeness)
         ])
+        
+        # Special handling for XGBoost
+        if XGB_AVAILABLE and hasattr(model, 'feature_importances_'):
+            # XGBoost models have feature_importances_ attribute
+            pass
+        elif XGB_AVAILABLE and hasattr(model, 'get_booster'):
+            # XGBoost models also support get_booster().get_score()
+            is_tree_based = True
+        
+        # Special handling for ds_modeling wrapper models
+        if DS_MODELING_AVAILABLE:
+            if hasattr(model, '_wrapped_predictor'):
+                # ds_modeling wrapper models have the actual sklearn model in _wrapped_predictor
+                wrapped_model = model._wrapped_predictor
+                if hasattr(wrapped_model, 'feature_importances_'):
+                    is_tree_based = True
+                elif hasattr(wrapped_model, 'get_booster'):
+                    is_tree_based = True
         
         if not is_tree_based:
             return None
@@ -440,6 +475,67 @@ def _perform_feature_importance_analysis(pipeline_fitted, X_test, y_test, pipeli
                 'feature': feature_names,
                 'importance': feature_importance
             }).sort_values('importance', ascending=False)
+        elif XGB_AVAILABLE and hasattr(model, 'get_booster'):
+            # XGBoost specific feature importance
+            try:
+                booster = model.get_booster()
+                feature_scores = booster.get_score(importance_type='gain')
+                
+                # Convert to DataFrame format
+                feature_names = list(feature_scores.keys())
+                feature_importance = list(feature_scores.values())
+                
+                importance_df = pd.DataFrame({
+                    'feature': feature_names,
+                    'importance': feature_importance
+                }).sort_values('importance', ascending=False)
+                
+                print(f"      Using XGBoost 'gain' importance scores")
+            except Exception as e:
+                print(f"      ⚠️ XGBoost feature importance failed: {e}")
+                return None
+        elif DS_MODELING_AVAILABLE and hasattr(model, '_wrapped_predictor'):
+            # ds_modeling wrapper models - get feature importance from wrapped predictor
+            try:
+                wrapped_model = model._wrapped_predictor
+                
+                if hasattr(wrapped_model, 'feature_importances_'):
+                    feature_importance = wrapped_model.feature_importances_
+                    feature_names = X_test.columns.tolist()
+                    
+                    # Ensure lengths match
+                    if len(feature_importance) != len(feature_names):
+                        min_length = min(len(feature_importance), len(feature_names))
+                        feature_importance = feature_importance[:min_length]
+                        feature_names = feature_names[:min_length]
+                    
+                    importance_df = pd.DataFrame({
+                        'feature': feature_names,
+                        'importance': feature_importance
+                    }).sort_values('importance', ascending=False)
+                    
+                    print(f"      Using ds_modeling wrapper feature importance")
+                elif hasattr(wrapped_model, 'get_booster'):
+                    # XGBoost wrapper
+                    booster = wrapped_model.get_booster()
+                    feature_scores = booster.get_score(importance_type='gain')
+                    
+                    feature_names = list(feature_scores.keys())
+                    feature_importance = list(feature_scores.values())
+                    
+                    importance_df = pd.DataFrame({
+                        'feature': feature_names,
+                        'importance': feature_importance
+                    }).sort_values('importance', ascending=False)
+                    
+                    print(f"      Using ds_modeling XGBoost wrapper 'gain' importance scores")
+                else:
+                    print(f"      ⚠️ ds_modeling wrapper model doesn't support feature importance")
+                    return None
+                    
+            except Exception as e:
+                print(f"      ⚠️ ds_modeling wrapper feature importance failed: {e}")
+                return None
             
             # Print top 10 features
             print(f"      Top 10 features by model importance:")
@@ -490,9 +586,23 @@ def _aggregate_feature_importance_results(results):
             importance_results = fold['importance_results']
             importance_df = importance_results['feature_importance']
             
-            for _, row in importance_df.iterrows():
-                feature = row['feature']
-                importance = row['importance']
+            # Handle both DataFrame and numpy array formats
+            if hasattr(importance_df, 'iterrows'):
+                # DataFrame format
+                for _, row in importance_df.iterrows():
+                    feature = row['feature']
+                    importance = row['importance']
+            else:
+                # Numpy array format - convert to DataFrame first
+                feature_names = importance_results.get('feature_names', [f'feature_{i}' for i in range(len(importance_df))])
+                importance_df = pd.DataFrame({
+                    'feature': feature_names,
+                    'importance': importance_df
+                })
+                
+                for _, row in importance_df.iterrows():
+                    feature = row['feature']
+                    importance = row['importance']
                 
                 all_features.add(feature)
                 if feature not in feature_importance_sum:
@@ -610,49 +720,63 @@ def time_series_cross_validation(
             print(f"    Sales in test: {y_test.sum():.1f}")
             
             try:
-                # Use sklearn pipeline methods properly - like your boss intended!
-                # Fit the pipeline on training data (this will fit all transformers + model)
-                pipeline_fitted = pipeline.fit(X_train, y_train)
+                # Simple and clean approach - like your boss intended!
+                # Clone the pipeline for this fold
+                pipeline_clone = clone(pipeline)
+                
+                # Set model names for all transformers in the pipeline
+                if hasattr(pipeline_clone, 'named_steps'):
+                    for step_name, step in pipeline_clone.named_steps.items():
+                        if hasattr(step, 'set_model_name'):
+                            step.set_model_name(pipeline_name)
+                
+                # Fit the pipeline on training data
+                pipeline_clone.fit(X_train, y_train)
                 
                 # Make predictions using the fitted pipeline
-                y_pred = pipeline_fitted.predict(X_test)
+                y_pred = pipeline_clone.predict(X_test)
                 y_pred_proba = None
-                if hasattr(pipeline_fitted, 'predict_proba'):
-                    y_pred_proba = pipeline_fitted.predict_proba(X_test)
+                if hasattr(pipeline_clone, 'predict_proba'):
+                    y_pred_proba = pipeline_clone.predict_proba(X_test)
                 
                 # Get feature count from the fitted pipeline
-                # For sklearn pipelines, we can get the actual transformed feature count
                 try:
                     # Get the transformed training data to see actual feature count
-                    X_train_transformed = pipeline_fitted[:-1].transform(X_train)
+                    X_train_transformed = pipeline_clone[:-1].transform(X_train)
                     feature_count = X_train_transformed.shape[1]
                 except:
                     # Fallback to original data count
                     feature_count = X_train.shape[1]
                 
-                if 'roei' in pipeline_name or 'old_model' in pipeline_name:
+                if 'old_model' in pipeline_name:
                     print(f"    ✅ Model features: {feature_count} feature (p_sale only)")
                 else:
                     print(f"    ✅ Model features: {feature_count} essential features (transformed by pipeline)")
                 
-                # Reduced verbosity - only show feature count
-                print(f"    🔍 Features: {feature_count} total features")
-                
-                # Perform feature importance analysis for tree-based models (GB and RF)
+                # Perform feature importance analysis for tree-based models (GB, RF, ROEI if tree-based)
                 importance_results = None
-                if 'gb' in pipeline_name.lower() or 'rf' in pipeline_name.lower():
-                    try:
-                        if hasattr(pipeline_fitted, 'named_steps'):
-                            # Get the final model from the fitted pipeline
-                            final_model = pipeline_fitted.named_steps[list(pipeline_fitted.named_steps.keys())[-1]]
-                            if hasattr(final_model, 'feature_importances_'):
-                                feature_importance = final_model.feature_importances_
-                                importance_results = {
-                                    'feature_importance': feature_importance,
-                                    'feature_names': None
-                                }
-                    except Exception as e:
-                        print(f"    ⚠️ Feature importance analysis not available: {e}")
+                try:
+                    if hasattr(pipeline_clone, 'named_steps'):
+                        # Get the final model from the fitted pipeline
+                        final_model = pipeline_clone.named_steps[list(pipeline_clone.named_steps.keys())[-1]]
+                        if hasattr(final_model, 'feature_importances_'):
+                            feature_importance = final_model.feature_importances_
+                            # Get feature names from the transformed data
+                            try:
+                                X_train_transformed = pipeline_clone[:-1].transform(X_train)
+                                if hasattr(X_train_transformed, 'columns'):
+                                    feature_names = list(X_train_transformed.columns)
+                                else:
+                                    feature_names = [f'feature_{i}' for i in range(X_train_transformed.shape[1])]
+                            except:
+                                feature_names = [f'feature_{i}' for i in range(len(feature_importance))]
+                            
+                            importance_results = {
+                                'feature_importance': feature_importance,
+                                'feature_names': feature_names
+                            }
+                except Exception as e:
+                    print(f"    ⚠️ Feature importance analysis not available: {e}")
                 
                 # Calculate metrics using the predictions
                 if is_classification:
@@ -1146,7 +1270,6 @@ def run_biz2credit_analysis(df, pipelines, target_column='sales_count'):
     print("="*60)
     print("Feature analysis disabled for performance")
     print("New features added: network (one-hot), time_to_clickout_S, time_to_clickout_S_group (dummies)")
-    print("Focusing on data flow analysis and debugging")
     
     # Stage 3: Pipeline creation (no output needed)
     if not pipelines:
