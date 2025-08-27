@@ -1,75 +1,23 @@
 """
-Biz2Credit Framework - Analysis Functions + Time Series CV + Business Logic
-Purpose: Contains all analysis functions, CV logic, and business operations
-Role: Reusable library for Biz2Credit analysis workflow
+Biz2Credit Framework
+Contains only essential functions for time series CV and metrics calculation
 """
 
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+import numpy as np
+from sklearn.metrics import roc_auc_score
 from sklearn.base import clone
-
-# ds_modeling wrapper models (only import what works)
-try:
-    from ds_modeling.ml_framework.prdictors_wrappers.classifiers.linear import SkLogisticRegression
-    DS_MODELING_AVAILABLE = True
-except ImportError:
-    DS_MODELING_AVAILABLE = False
-    print("⚠️ ds_modeling wrapper models not available - using sklearn models only")
-
-# Import standard XGBoost instead of wrapper
-try:
-    from xgboost import XGBClassifier
-    XGB_AVAILABLE = True
-    print("✅ XGBoost available in framework - using standard XGBClassifier")
-except ImportError as e:
-    XGB_AVAILABLE = False
-    print(f"⚠️ XGBoost not available in framework: {e}")
-
-from ds_modeling.ml_framework.base import Transformer
-from ds_modeling.ml_framework.pipeline import Pipeline
-from biz2credit_transformers import Biz2CreditPrep1, Biz2CreditImputer
-
-# Time Series CV imports
-from sklearn.base import BaseEstimator
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, log_loss, brier_score_loss, confusion_matrix,
-    classification_report, balanced_accuracy_score,
-    mean_squared_error, mean_absolute_error, r2_score,
-    mean_absolute_percentage_error, median_absolute_error,
-    explained_variance_score, precision_recall_curve
-)
-from sklearn.calibration import calibration_curve
-from sklearn.utils.multiclass import type_of_target
+from ds_modeling.ml_framework.evaluation_metrics import BINARY_CLASSIFICATION_BOTH_PROBA_METRICS
+from ece_utils import expected_calibration_error
 import warnings
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Tuple, Union
 
-# SHAP imports for feature importance
-try:
-    import shap
-    SHAP_AVAILABLE = True
-except ImportError:
-    SHAP_AVAILABLE = False
-    print("⚠️ SHAP not available - feature importance analysis will be skipped")
-
-# Filter out common sklearn warnings that are not critical
+# Filter out common sklearn warnings
 warnings.filterwarnings("ignore", message="A single label was found in 'y_true' and 'y_pred'")
 warnings.filterwarnings("ignore", message="y_pred contains classes not in y_true")
 
 # ============================================================================
-# STAGE 1: PRE-ANALYSIS FUNCTIONS
-# ============================================================================
-
-def generic_pre_analysis(df, title="Dataset Pre-Analysis"):
-    """
-    Generic pre-analysis for any dataset
-    """
-    print(f"=== {title} ===")
+def run_pre_analysis(df):
+    """Run basic data analysis and print summary"""
     print(f"Dataset shape: {df.shape}")
     print(f"Memory usage: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
     print(f"Data types:\n{df.dtypes.value_counts()}")
@@ -85,99 +33,138 @@ def generic_pre_analysis(df, title="Dataset Pre-Analysis"):
     print(f"\nNull Values Summary:")
     print(null_df[null_df['Null_Count'] > 0])
     
-    # Duplicate analysis
-    duplicates = df.duplicated().sum()
-    print(f"\nDuplicate rows: {duplicates} ({duplicates/len(df)*100:.2f}%)")
-    
     return null_df
 
-
-def biz2credit_specific_analysis(df):
-    """
-    Biz2Credit-specific pre-analysis
-    """
-    print("\n=== BIZ2CREDIT SPECIFIC ANALYSIS ===")
-    
-    # Enrichment features analysis
-    enrichment_features = ['age_of_business_months', 'application_annual_revenue', 'business_legal_structure']
-    available_enrichment = [f for f in enrichment_features if f in df.columns]
-    
-    print("Enrichment Features Analysis:")
-    for feature in available_enrichment:
-        if feature in df.columns:
-            null_count = df[feature].isnull().sum()
-            null_pct = (null_count / len(df)) * 100
-            unique_vals = df[feature].nunique()
-            print(f"- {feature}: {null_count} nulls ({null_pct:.1f}%), {unique_vals} unique values")
-    
-    # Business metrics
-    if 'leads_count' in df.columns and 'sales_count' in df.columns:
-        total_leads = df['leads_count'].sum()
-        total_sales = df['sales_count'].sum()
-        conversion_rate = (total_sales / total_leads) * 100 if total_leads > 0 else 0
-        print(f"\nBusiness Metrics:")
-        print(f"- Total leads: {total_leads:,}")
-        print(f"- Total sales: {total_sales:,}")
-        print(f"- Conversion rate: {conversion_rate:.2f}%")
-    
-    # Date range analysis
-    if 'click_month' in df.columns:
-        date_range = df['click_month'].agg(['min', 'max'])
-        print(f"\nDate Range:")
-        print(f"- From: {date_range['min']}")
-        print(f"- To: {date_range['max']}")
-    
-    return available_enrichment
-
-
-def run_pre_analysis(df):
-    """
-    Run both generic and specific pre-analysis
-    """
-    print("=" * 60)
-    print("STAGE 1: PRE-ANALYSIS")
-    print("=" * 60)
-    
-    # Add debug printing for raw data check
-    print("=== RAW DATA CHECK ===")
-    print(f"Initial shape: {df.shape}")
-    print(f"Initial columns: {list(df.columns)}")
-    
-    # Run generic analysis
-    null_df = generic_pre_analysis(df, "BIZ2CREDIT PRE-ANALYSIS")
-    
-    # Run specific analysis
-    enrichment_features = biz2credit_specific_analysis(df)
-    
-    return null_df, enrichment_features
-
-
-# ============================================================================
-# STAGE 2: FEATURE ANALYSIS FUNCTIONS
 # ============================================================================
 
-def run_raw_feature_visualizations(df): #empty function right now
-    """
-    Analyze raw features (disabled for performance)
-    """
-    print("=== RAW FEATURE ANALYSIS ===")
-    print("Feature analysis disabled for performance")
-    return None
-
-
-def run_transformed_feature_visualizations(df): #empty function right now
-    """
-    Analyze transformed features (disabled for performance)
-    """
-    print("=== TRANSFORMED FEATURE ANALYSIS ===")
-    print("Feature analysis disabled for performance")
-    return None
+def analyze_enrichment_features(df_company, enrichment_features: list[str] = None):
+    """Analyze enrichment features availability and quality with detailed insights"""
+    if enrichment_features is None:
+        return
+    
+    print(f"\n🔍 Available enrichment features after company-specific filtering:")
+    
+    for feature in enrichment_features:
+        if feature in df_company.columns:
+            null_count = df_company[feature].isnull().sum()
+            total_count = len(df_company)
+            null_rate = null_count / total_count * 100
+            print(f"   ✅ {feature}: {null_count:,}/{total_count:,} nulls ({null_rate:.1f}%)")
+            
+            # Analyze feature type and provide insights
+            if df_company[feature].dtype == 'object':
+                # Categorical feature analysis
+                print(f"      📊 Categorical Analysis - Top 10 Categories:")
+                print(f"      {'Category':<30} {'Leads':<8} {'L2S':<8}")
+                print(f"      {'-' * 30} {'-' * 8} {'-' * 8}")
+                
+                # Group by category and count leads + sum sales
+                cat_analysis = df_company.groupby(feature).agg({
+                    'sales_count': ['count', 'sum']
+                }).round(2)
+                cat_analysis.columns = ['leads', 'sales_sum']
+                # Calculate L2S ratio: sales_sum / leads
+                cat_analysis['l2s'] = (cat_analysis['sales_sum'] / cat_analysis['leads']).round(4)
+                cat_analysis = cat_analysis.sort_values('leads', ascending=False).head(10)
+                
+                for cat, row in cat_analysis.iterrows():
+                    cat_str = str(cat)[:28] + ".." if len(str(cat)) > 30 else str(cat)
+                    print(f"      {cat_str:<30} {row['leads']:<8.0f} {row['l2s']:<8.4f}")
+                    
+            else:
+                # Numerical feature analysis
+                print(f"      📊 Numerical Analysis - Correlation with Sales:")
+                
+                # Calculate correlation with sales_count
+                correlation = df_company[feature].corr(df_company['sales_count'])
+                
+                # Group by feature value and analyze sales trend
+                if df_company[feature].nunique() <= 20:  # If few unique values, show grouping
+                    num_analysis = df_company.groupby(df_company[feature]).agg({
+                        'sales_count': ['count', 'sum']
+                    }).round(2)
+                    num_analysis.columns = ['leads', 'sales_sum']
+                    # Calculate L2S ratio: sales_sum / leads
+                    num_analysis['l2s'] = (num_analysis['sales_sum'] / num_analysis['leads']).round(4)
+                    num_analysis = num_analysis.sort_values('leads', ascending=False).head(5)
+                    
+                    print(f"      {'Value':<15} {'Leads':<8} {'L2S':<8}")
+                    print(f"      {'-' * 15} {'-' * 8} {'-' * 8}")
+                    for val, row in num_analysis.iterrows():
+                        val_str = str(val)[:13] + ".." if len(str(val)) > 15 else str(val)
+                        print(f"      {val_str:<15} {row['leads']:<8.0f} {row['l2s']:<8.4f}")
+                
+                # Show correlation and trend
+                trend = "↗️ ASC" if correlation > 0.1 else "↘️ DESC" if correlation < -0.1 else "➡️ NONE"
+                print(f"      📈 Correlation with sales: {correlation:.3f} ({trend})")
+                
+        else:
+            print(f"   ❌ {feature}: Column not found")
+        
+        print()  # Add spacing between features
 
 # ============================================================================
-# STAGE 4: TIME SERIES CROSS-VALIDATION FUNCTIONS
+
+def _calculate_classification_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray = None,
+    y_pred_proba: np.ndarray = None
+) -> dict[str, float]:
+    """Calculate essential probability-based classification metrics with ECE."""
+    
+    metrics = {}
+    
+    # Probability-based metrics only (if probabilities available)
+    if y_pred_proba is not None:
+        if len(np.unique(y_true)) == 2:
+            # Binary classification - essential KPIs only
+            metrics['roc_auc'] = roc_auc_score(y_true, y_pred_proba[:, 1])
+            metrics['log_loss'] = BINARY_CLASSIFICATION_BOTH_PROBA_METRICS['log_loss'](y_true, y_pred_proba)
+            metrics['r2_proba'] = BINARY_CLASSIFICATION_BOTH_PROBA_METRICS['r2_score'](y_true, y_pred_proba[:, 1])
+            metrics['rmse_proba'] = BINARY_CLASSIFICATION_BOTH_PROBA_METRICS['root_mean_squared_error'](y_true, y_pred_proba[:, 1])
+            
+            # Calculate ECE using team's function (keeping this as requested)
+            ece = expected_calibration_error(y_true, y_pred_proba[:, 1], n_bins=5)
+            metrics['ece'] = ece
+            
+            # TEMPORARY DEBUG: Print ECE bins for first fold only
+            if len(y_true) > 100:  # Only for test sets (not training)
+                print(f"🔍 ECE DEBUG - Bins: {ece:.4f} (n_bins=5)")
+                # Show actual bin details for debugging
+                df_debug = pd.DataFrame({'y_true': y_true, 'y_pred_proba': y_pred_proba[:, 1]})
+                
+                # Debug probability distribution
+                unique_probs = df_debug['y_pred_proba'].nunique()
+                print(f"🔍 Probability Distribution: {len(df_debug)} samples, {unique_probs} unique values")
+                print(f"🔍 Min: {df_debug['y_pred_proba'].min():.6f}, Max: {df_debug['y_pred_proba'].max():.6f}")
+                
+                try:
+                    df_debug['y_pred_bin'] = pd.qcut(df_debug['y_pred_proba'], q=5, labels=False, duplicates='drop')
+                    bin_details = df_debug.groupby('y_pred_bin').agg({
+                        'y_pred_proba': ['mean', 'count'],
+                        'y_true': 'mean'
+                    }).round(4)
+                    print(f"🔍 ECE Bin Details:\n{bin_details}")
+                except Exception as e:
+                    print(f"🔍 Quantile binning failed: {e}")
+                    # Fallback to manual binning
+                    df_debug['y_pred_bin'] = pd.cut(df_debug['y_pred_proba'], bins=5, labels=False, include_lowest=True)
+                    bin_details = df_debug.groupby('y_pred_bin').agg({
+                        'y_pred_proba': ['mean', 'count'],
+                        'y_true': 'mean'
+                    }).round(4)
+                    print(f"🔍 Fallback Bin Details:\n{bin_details}")
+            
+        else:
+            # Multiclass classification
+            metrics['roc_auc'] = roc_auc_score(y_true, y_pred_proba, multi_class='ovr', average='weighted')
+            metrics['log_loss'] = BINARY_CLASSIFICATION_BOTH_PROBA_METRICS['log_loss'](y_true, y_pred_proba)
+    
+    return metrics
+
 # ============================================================================
 
-def _generate_time_series_folds(data: pd.DataFrame, date_column: str, training_period: int, test_days: int) -> List[Tuple[int, int, int]]:
+def _generate_time_series_folds(data: pd.DataFrame, date_column: str, train_days: int = 90, test_days: int = 7, step_days: int = 7) -> list[tuple[int, int, int]]:
     """
     Generate time series fold indices for cross-validation.
     
@@ -199,1150 +186,370 @@ def _generate_time_series_folds(data: pd.DataFrame, date_column: str, training_p
     """
     folds = []
     
+    # Ensure data is sorted by date
+    data_sorted = data.sort_values(date_column).reset_index(drop=True)
+    
     # Get unique dates and sort them
-    unique_dates = pd.to_datetime(data[date_column]).dt.date.unique()
+    unique_dates = pd.to_datetime(data_sorted[date_column]).dt.date.unique()
     unique_dates = sorted(unique_dates)
     
-    if len(unique_dates) < training_period + test_days:
+    if len(unique_dates) < train_days + test_days:
         return folds
     
     # Calculate step size: Use smaller steps for better coverage
     total_days = len(unique_dates)
-    available_days = total_days - training_period - test_days
+    available_days = total_days - train_days - test_days
     
     # Use non-overlapping folds for realistic coverage
-    step_size = test_days  # Move forward by exactly 7 days (non-overlapping)
+    step_size = step_days  # Move forward by exactly step_days (non-overlapping)
     
-    print(f"📅 Fold Generation Details:")
-    print(f"  Total unique dates: {total_days}")
-    print(f"  Training period: {training_period} days")
-    print(f"  Test period: {test_days} days")
-    print(f"  Step size: {step_size} days (non-overlapping)")
-    print(f"  Available days for folds: {available_days}")
-    print(f"  Expected folds: {available_days // step_size}")
+    print(f"📅 Generating {available_days // step_size} time series folds ({train_days} days train, {test_days} days test, {step_days} days step)")
     
     # Start with training period
     train_start_idx = 0
-    train_end_idx = training_period
+    train_end_idx = train_days
     
     while train_end_idx + test_days <= len(unique_dates):
         test_end_idx = train_end_idx + test_days
         
         # Find the actual row indices for these date boundaries
         train_start_date = unique_dates[train_start_idx]
-        train_end_date = unique_dates[train_end_idx - 1]
-        test_end_date = unique_dates[test_end_idx - 1]
+        train_end_date = unique_dates[train_start_idx + train_days - 1]
+        test_start_date = unique_dates[train_start_idx + train_days]
+        test_end_date = unique_dates[train_start_idx + train_days + test_days - 1]
         
         # Convert dates back to row indices
-        train_start = data[data[date_column].dt.date >= train_start_date].index[0]
-        train_end = data[data[date_column].dt.date <= train_end_date].index[-1] + 1
-        test_end = data[data[date_column].dt.date <= test_end_date].index[-1] + 1
+        train_start = data_sorted[data_sorted[date_column].dt.date >= train_start_date].index[0]
+        train_end = data_sorted[data_sorted[date_column].dt.date <= train_end_date].index[-1] + 1
+        test_start = data_sorted[data_sorted[date_column].dt.date >= test_start_date].index[0]
+        test_end = data_sorted[data_sorted[date_column].dt.date <= test_end_date].index[-1] + 1
         
         # Ensure we have enough data
-        if train_end - train_start >= 100 and test_end - train_end >= 10:  # Minimum sample requirements
-            folds.append((train_start, train_end, test_end))
+        if train_end - train_start >= 100 and test_end - test_start >= 10:  # Minimum sample requirements
+            folds.append((train_start, train_end, test_start, test_end))
         
-        # Move forward by test_days for non-overlapping folds
+        # Move forward by step_days for non-overlapping folds
         train_start_idx += step_size
         train_end_idx += step_size
     
     return folds
 
+# ============================================================================
 
-def _calculate_classification_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    y_pred_proba: np.ndarray = None
-) -> Dict[str, float]:
-    """Calculate comprehensive classification metrics."""
-    
-    metrics = {}
-    
-    # Basic metrics from hard predictions
-    metrics['accuracy'] = accuracy_score(y_true, y_pred)
-    metrics['balanced_accuracy'] = balanced_accuracy_score(y_true, y_pred)
-    
-    # Handle binary vs multiclass
-    average_method = 'binary' if len(np.unique(y_true)) == 2 else 'weighted'
-    
-    metrics['precision'] = precision_score(y_true, y_pred, average=average_method, zero_division=0)
-    metrics['recall'] = recall_score(y_true, y_pred, average=average_method, zero_division=0)
-    metrics['f1_score'] = f1_score(y_true, y_pred, average=average_method, zero_division=0)
-    
-    # Probability-based metrics (if probabilities available)
-    if y_pred_proba is not None:
-        try:
-            if len(np.unique(y_true)) == 2:
-                # Binary classification
-                metrics['roc_auc'] = roc_auc_score(y_true, y_pred_proba[:, 1])
-                metrics['log_loss'] = log_loss(y_true, y_pred_proba)
-                metrics['brier_score'] = brier_score_loss(y_true, y_pred_proba[:, 1])
-                
-                # Calculate ECE (Expected Calibration Error) with L2S comparison
-                try:
-                    prob_true, prob_pred = calibration_curve(y_true, y_pred_proba[:, 1], n_bins=10)
-                    ece = np.mean(np.abs(prob_true - prob_pred))
-                    
-                    # Get the bin edges and indices for detailed L2S analysis
-                    bin_edges = np.linspace(0, 1, 11)  # 11 edges for 10 bins
-                    bin_indices = np.digitize(y_pred_proba[:, 1], bin_edges) - 1
-                    bin_indices = np.clip(bin_indices, 0, 9)  # Ensure valid bin indices
-                    
-                    # Calculate L2S metrics for each bin
-                    bin_metrics = []
-                    for bin_idx in range(10):
-                        bin_mask = (bin_indices == bin_idx)
-                        if bin_mask.sum() > 0:
-                            bin_samples = bin_mask.sum()
-                            bin_sales = y_true[bin_mask].sum()
-                            bin_pred_prob = y_pred_proba[bin_mask, 1].mean()
-                            bin_actual_l2s = bin_sales / bin_samples if bin_samples > 0 else 0
-                            
-                            # Compare predicted p_sale to actual L2S rate
-                            l2s_comparison = abs(bin_pred_prob - bin_actual_l2s)
-                            
-                            bin_metrics.append({
-                                'bin_idx': bin_idx,
-                                'bin_samples': bin_samples,
-                                'bin_sales': bin_sales,
-                                'bin_pred_prob': bin_pred_prob,
-                                'bin_actual_l2s': bin_actual_l2s,
-                                'l2s_comparison': l2s_comparison,
-                                'bin_range': f"{bin_edges[bin_idx]:.2f}-{bin_edges[bin_idx+1]:.2f}"
-                            })
-                    
-                    metrics['ece'] = ece
-                    
-                    # Store calibration curve details for detailed ECE analysis
-                    metrics['calibration_details'] = {
-                        'prob_true': prob_true,
-                        'prob_pred': prob_pred,
-                        'n_bins': 10,
-                        'ece': ece,
-                        'bin_metrics': bin_metrics,
-                        'total_samples': len(y_true),
-                        'total_sales': y_true.sum()
-                    }
-                except Exception as e:
-                    warnings.warn(f"Could not calculate ECE: {e}")
-                    metrics['ece'] = None
-                    metrics['calibration_details'] = None
-                
-                # Calculate RMSE and R² for probability predictions vs actual
-                metrics['rmse_proba'] = np.sqrt(mean_squared_error(y_true, y_pred_proba[:, 1]))
-                metrics['r2_proba'] = r2_score(y_true, y_pred_proba[:, 1])
-                
-                # Calculate optimal threshold for F1 score (this still requires hard predictions)
-                precisions, recalls, thresholds = precision_recall_curve(y_true, y_pred_proba[:, 1])
-                f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
-                optimal_idx = np.argmax(f1_scores)
-                optimal_threshold = thresholds[optimal_idx] if optimal_idx < len(thresholds) else 0.5
-                
-                # Use optimal threshold for better metrics
-                y_pred_optimal = (y_pred_proba[:, 1] >= optimal_threshold).astype(int)
-                metrics['f1_optimal'] = f1_score(y_true, y_pred_optimal, average=average_method, zero_division=0)
-                metrics['precision_optimal'] = precision_score(y_true, y_pred_optimal, average=average_method, zero_division=0)
-                metrics['recall_optimal'] = recall_score(y_true, y_pred_optimal, average=average_method, zero_division=0)
-                metrics['accuracy_optimal'] = accuracy_score(y_true, y_pred_optimal)
-                metrics['optimal_threshold'] = optimal_threshold
-                
-                # Business metrics
-                total_sales = y_true.sum()
-                total_pred_sales = y_pred_proba[:, 1].sum()
-                total_leads = len(y_true)
-                total_pred_leads = y_pred.sum()
-                
-                metrics['total_sales'] = total_sales
-                metrics['total_pred_sales'] = total_pred_sales
-                metrics['total_leads'] = total_leads
-                metrics['total_pred_leads'] = total_pred_leads
-                metrics['sales_ratio'] = total_pred_sales / total_sales if total_sales > 0 else None
-                metrics['leads_ratio'] = total_pred_leads / total_leads if total_leads > 0 else None
-                
-            else:
-                # Multiclass classification
-                metrics['roc_auc'] = roc_auc_score(y_true, y_pred_proba, multi_class='ovr', average='weighted')
-                metrics['log_loss'] = log_loss(y_true, y_pred_proba)
-                
-        except Exception as e:
-            # Only warn for non-expected errors (not single-class cases)
-            if "Only one class present" not in str(e):
-                warnings.warn(f"Could not calculate probability-based metrics: {e}")
-    
-    return metrics
-
-
-def _calculate_weighted_average(fold_results: List[Dict[str, Any]], fold_weights: List[int]) -> Dict[str, Any]:
+def _calculate_weighted_average(metrics_list: list[dict[str, float]], weights: list[float]) -> dict[str, float]:
     """Calculate weighted average of metrics across folds."""
-    
-    if not fold_results or not fold_weights:
+    if not metrics_list or not weights:
         return {}
     
-    # Initialize weighted sums
-    weighted_sums = {}
-    total_weight = sum(fold_weights)
+    weighted_metrics = {}
+    total_weight = sum(weights)
     
-    # Calculate weighted sums for each metric
-    for fold_result, weight in zip(fold_results, fold_weights):
-        for metric, value in fold_result.items():
-            if value is not None and not pd.isna(value):
-                if metric not in weighted_sums:
-                    weighted_sums[metric] = 0
-                
-                # Only multiply if the value is numeric
-                if isinstance(value, (int, float)):
-                    weighted_sums[metric] += value * weight
-                else:
-                    # For non-numeric values, just store the value
-                    weighted_sums[metric] = value
+    # Get all metric names
+    all_metrics = set()
+    for metrics in metrics_list:
+        all_metrics.update(metrics.keys())
+    
+    # Calculate weighted average for each metric
+    for metric in all_metrics:
+        weighted_sum = 0
+        valid_weights = 0
+        
+        for metrics, weight in zip(metrics_list, weights):
+            if metric in metrics and metrics[metric] is not None:
+                weighted_sum += metrics[metric] * weight
+                valid_weights += weight
+        
+        if valid_weights > 0:
+            weighted_metrics[metric] = weighted_sum / valid_weights
+        else:
+            weighted_metrics[metric] = None
+    
+    return weighted_metrics
+
+# ============================================================================
+
+def time_series_cross_validation(
+    pipeline,
+    X: pd.DataFrame,
+    y: pd.Series,
+    date_column: str,
+    train_days: int = 90,
+    test_days: int = 7,
+    step_days: int = 7,
+    data_sorted: pd.DataFrame = None
+) -> dict[str, any]:
+    """Perform time series cross-validation."""
+    
+    # Generate folds
+    folds = _generate_time_series_folds(X, date_column, train_days, test_days, step_days)
+    
+    if not folds:
+        print("❌ No valid folds generated. Check your data and date column.")
+        return {}
+    
+    fold_results = []
+    all_metrics = []
+    weights = []
+    
+    print(f"🔄 Running {len(folds)} time series folds...")
+    
+    for fold_idx, (train_start, train_end, test_start, test_end) in enumerate(folds):
+        print(f"  Fold {fold_idx + 1}/{len(folds)}: Train {train_start}-{train_end}, Test {test_start}-{test_end}")
+        
+        # Split data for this fold
+        X_train = X.iloc[train_start:train_end]
+        y_train = y.iloc[train_start:train_end]
+        X_test = X.iloc[test_start:test_end]
+        y_test = y.iloc[test_start:test_end]
+        
+        if len(X_train) == 0 or len(X_test) == 0:
+            print(f"    ❌ Skipping fold {fold_idx + 1} - empty train or test set")
+            continue
+        
+        # Clone pipeline for this fold
+        fold_pipeline = clone(pipeline)
+        
+        # Fit and predict
+        fold_pipeline.fit(X_train, y_train)
+       # y_pred = fold_pipeline.predict(X_test)
+        y_pred_proba = fold_pipeline.predict_proba(X_test)
+        
+        # Calculate test metrics
+        test_metrics = _calculate_classification_metrics(y_test, None, y_pred_proba)
+        
+        # Calculate train metrics (on training data)
+        y_train_pred = fold_pipeline.predict(X_train)
+        y_train_pred_proba = fold_pipeline.predict_proba(X_train)
+        train_metrics = _calculate_classification_metrics(y_train, y_train_pred, y_train_pred_proba)
+        
+        # Store results
+        weight = len(y_test)
+        fold_results.append({
+            'test_metrics': test_metrics,
+            'train_metrics': train_metrics,
+            'weight': weight,
+            'fold_idx': fold_idx
+        })
+        
+        all_metrics.append(test_metrics)
+        weights.append(weight)
+        
+        # Print both train and test metrics
+        test_roc_auc = test_metrics.get('roc_auc')
+        test_ece = test_metrics.get('ece')
+        train_roc_auc = train_metrics.get('roc_auc')
+        train_ece = train_metrics.get('ece')
+        
+        test_roc_auc_str = f"{test_roc_auc:.4f}" if test_roc_auc is not None else "N/A"
+        test_ece_str = f"{test_ece:.4f}" if test_ece is not None else "N/A"
+        train_roc_auc_str = f"{train_roc_auc:.4f}" if train_roc_auc is not None else "N/A"
+        train_ece_str = f"{train_ece:.4f}" if train_ece is not None else "N/A"
+        
+        # Get dates for this fold
+        train_start, train_end, test_start, test_end = folds[fold_idx]
+        train_dates = data_sorted.iloc[train_start:train_end][date_column]
+        test_dates = data_sorted.iloc[test_start:test_end][date_column]
+        
+        train_start_date = train_dates.min().strftime('%Y-%m-%d')
+        train_end_date = train_dates.max().strftime('%Y-%m-%d')
+        test_start_date = test_dates.min().strftime('%Y-%m-%d')
+        test_end_date = test_dates.max().strftime('%Y-%m-%d')
+        
+        print(f"✅ Fold {fold_idx + 1}:")
+        print(f"   Train: {train_start_date} to {train_end_date} (rows {train_start}-{train_end}, size: {train_end - train_start})")
+        print(f"   Test:  {test_start_date} to {test_end_date} (rows {test_start}-{test_end}, size: {test_end - test_start})")
+        print(f"   Metrics: Train ROC AUC: {train_roc_auc_str}, Test ROC AUC: {test_roc_auc_str}, Test RMSE: {test_metrics.get('rmse_proba', 'N/A'):.4f}")
+    
+    if not all_metrics:
+        print("❌ No successful folds completed")
+        return {}
     
     # Calculate weighted averages
-    weighted_avg = {}
-    for metric, weighted_sum in weighted_sums.items():
-        # Skip non-numeric metrics that might cause calculation errors
-        if isinstance(weighted_sum, (int, float)) and not pd.isna(weighted_sum):
-            weighted_avg[metric] = weighted_sum / total_weight
-        else:
-            weighted_avg[metric] = weighted_sum  # Keep as-is for non-numeric metrics
+    weighted_average = _calculate_weighted_average(all_metrics, weights)
     
-    # Add metadata
-    weighted_avg['total_folds'] = len(fold_results)
-    weighted_avg['total_test_samples'] = total_weight
+    return {
+        'fold_results': fold_results,
+        'weighted_average': weighted_average,
+        'total_folds': len(folds)
+    }
+
+# ============================================================================
+
+def print_simple_results_summary(results: dict[str, any], pipeline_name: str):
+    """Print simple results summary for a pipeline."""
+    if not results or 'weighted_average' not in results:
+        print(f"❌ No results for {pipeline_name}")
+        return
     
-    return weighted_avg
+    metrics = results['weighted_average']
+    total_folds = results.get('total_folds', 0)
+    
+    print(f"\n📊 {pipeline_name.upper()} - SUMMARY:")
+    print(f"   Folds: {total_folds}")
+    print(f"   ROC AUC: {metrics.get('roc_auc', 'N/A'):.4f}")
+    print(f"   Log Loss: {metrics.get('log_loss', 'N/A'):.4f}")
+    print(f"   R²: {metrics.get('r2_proba', 'N/A'):.4f}")
+    print(f"   RMSE: {metrics.get('rmse_proba', 'N/A'):.4f}")
+    print(f"   ECE: {metrics.get('ece', 'N/A'):.4f}")
+    
+    # Show 1-2 fold details with ECE bins
+    if 'fold_results' in results and len(results['fold_results']) > 0:
+        print(f"\n   📈 Sample Fold Details:")
+        for i, fold in enumerate(results['fold_results'][:2]):  # Show first 2 folds
+            test_metrics = fold['test_metrics']
+            train_metrics = fold['train_metrics']
+            weight = fold['weight']
+            print(f"     Fold {fold['fold_idx'] + 1} ({weight} samples):")
+            print(f"       Train - ROC AUC: {train_metrics.get('roc_auc', 'N/A'):.4f}, RMSE: {train_metrics.get('rmse_proba', 'N/A'):.4f}")
+            print(f"       Test  - ROC AUC: {test_metrics.get('roc_auc', 'N/A'):.4f}, RMSE: {test_metrics.get('rmse_proba', 'N/A'):.4f}")
 
+# ============================================================================
 
-def _perform_feature_importance_analysis(pipeline_fitted, X_test, y_test, pipeline_name, fold_idx):
-    """
-    Perform feature importance analysis for tree-based models
-    """
-    try:
-        # Check if this is a tree-based model that supports feature importance
-        model = pipeline_fitted
-        if hasattr(pipeline_fitted, 'named_steps'):
-            # For sklearn pipelines, get the final estimator
-            model = pipeline_fitted.named_steps.get(list(pipeline_fitted.named_steps.keys())[-1])
-        
-        # Check if it's a tree-based model
-        is_tree_based = any([
-            hasattr(model, 'feature_importances_'),
-            'RandomForest' in str(type(model)),
-            'GradientBoosting' in str(type(model)),
-            'XGB' in str(type(model)),
-            'LGBM' in str(type(model)),
-            'SkRandomForest' in str(type(model)),  # ds_modeling wrapper
-            'XgBoost' in str(type(model)),         # ds_modeling wrapper
-            'SkLogisticRegression' in str(type(model))  # ds_modeling wrapper (for completeness)
-        ])
-        
-        # Special handling for XGBoost
-        if XGB_AVAILABLE and hasattr(model, 'feature_importances_'):
-            # XGBoost models have feature_importances_ attribute
-            pass
-        elif XGB_AVAILABLE and hasattr(model, 'get_booster'):
-            # XGBoost models also support get_booster().get_score()
-            is_tree_based = True
-        
-        # Special handling for ds_modeling wrapper models
-        if DS_MODELING_AVAILABLE:
-            if hasattr(model, '_wrapped_predictor'):
-                # ds_modeling wrapper models have the actual sklearn model in _wrapped_predictor
-                wrapped_model = model._wrapped_predictor
-                if hasattr(wrapped_model, 'feature_importances_'):
-                    is_tree_based = True
-                elif hasattr(wrapped_model, 'get_booster'):
-                    is_tree_based = True
-        
-        if not is_tree_based:
-            return None
-        
-        print(f"    🔍 Performing feature importance analysis for {pipeline_name} (fold {fold_idx + 1})")
-        
-        # Get feature importances from the model
-        if hasattr(model, 'feature_importances_'):
-            feature_importance = model.feature_importances_
-            feature_names = X_test.columns.tolist()
+def run_time_series_cv(
+    pipelines: dict[str, any],
+    X: pd.DataFrame,
+    y: pd.Series,
+    date_column: str = 'clickout_date_prt',
+    enrichment_features: list[str] = None,
+    train_days: int = 90,
+    test_days: int = 7,
+    step_days: int = 7
+) -> dict[str, any]:
+    """Run time series cross-validation for all pipelines."""
+    
+    print("🚀 STARTING TIME SERIES CROSS-VALIDATION")
+    print("=" * 60)
+    
+    # Remove rows where all enrichment features are null (if provided)
+    if enrichment_features:
+        available_features = [f for f in enrichment_features if f in X.columns]
+        if available_features:
+            # Check if all enrichment features are null for each row
+            all_null_mask = X[available_features].isnull().all(axis=1)
+            initial_rows = len(X)
+            X = X[~all_null_mask]
+            y = y[~all_null_mask]
+            removed_rows = initial_rows - len(X)
             
-            # Ensure lengths match
-            if len(feature_importance) != len(feature_names):
-                # Use the shorter length to avoid errors
-                min_length = min(len(feature_importance), len(feature_names))
-                feature_importance = feature_importance[:min_length]
-                feature_names = feature_names[:min_length]
+            if removed_rows > 0:
+                print(f"📊 Removed {removed_rows:,} rows where all enrichment features were null")
+                print(f"📊 Remaining data: {len(X):,} rows")
+    
+    all_results = {}
+    
+    for pipeline_name, pipeline in pipelines.items():
+        print(f"\n🎯 Testing pipeline: {pipeline_name}")
+        print("-" * 50)
+        
+        results = time_series_cross_validation(pipeline, X, y, date_column, train_days, test_days, step_days, data_sorted=X.sort_values(date_column).reset_index(drop=True))
+        all_results[pipeline_name] = results
+        
+        # Print simple summary
+        print_simple_results_summary(results, pipeline_name)
+        
+        # 🌳 Analyze feature importance ONLY for RF model
+        if pipeline_name == 'optimized_rf':
+            analyze_feature_importance(pipeline, X, pipeline_name)
+    
+    return all_results
+
+# ============================================================================
+
+def analyze_feature_importance(pipeline, X: pd.DataFrame, pipeline_name: str):
+    """Analyze feature importance for Random Forest models."""
+    try:
+        # Get the final estimator (last step in pipeline)
+        final_estimator = pipeline.steps[-1][1]
+        
+        # Check if it's a Random Forest
+        if hasattr(final_estimator, 'feature_importances_'):
+            # Get feature names from the pipeline
+            feature_names = []
+            for step_name, step_transformer in pipeline.steps[:-1]:  # Exclude the final estimator
+                if hasattr(step_transformer, 'get_feature_names_out'):
+                    feature_names.extend(step_transformer.get_feature_names_out())
+                elif hasattr(step_transformer, 'get_feature_names'):
+                    feature_names.extend(step_transformer.get_feature_names())
+            
+            # If we couldn't get feature names, use generic ones
+            if not feature_names:
+                feature_names = [f'feature_{i}' for i in range(len(final_estimator.feature_importances_))]
             
             # Create feature importance DataFrame
             importance_df = pd.DataFrame({
                 'feature': feature_names,
-                'importance': feature_importance
+                'importance': final_estimator.feature_importances_
             }).sort_values('importance', ascending=False)
-        elif XGB_AVAILABLE and hasattr(model, 'get_booster'):
-            # XGBoost specific feature importance
-            try:
-                booster = model.get_booster()
-                feature_scores = booster.get_score(importance_type='gain')
-                
-                # Convert to DataFrame format
-                feature_names = list(feature_scores.keys())
-                feature_importance = list(feature_scores.values())
-                
-                importance_df = pd.DataFrame({
-                    'feature': feature_names,
-                    'importance': feature_importance
-                }).sort_values('importance', ascending=False)
-                
-                print(f"      Using XGBoost 'gain' importance scores")
-            except Exception as e:
-                print(f"      ⚠️ XGBoost feature importance failed: {e}")
-                return None
-        elif DS_MODELING_AVAILABLE and hasattr(model, '_wrapped_predictor'):
-            # ds_modeling wrapper models - get feature importance from wrapped predictor
-            try:
-                wrapped_model = model._wrapped_predictor
-                
-                if hasattr(wrapped_model, 'feature_importances_'):
-                    feature_importance = wrapped_model.feature_importances_
-                    feature_names = X_test.columns.tolist()
-                    
-                    # Ensure lengths match
-                    if len(feature_importance) != len(feature_names):
-                        min_length = min(len(feature_importance), len(feature_names))
-                        feature_importance = feature_importance[:min_length]
-                        feature_names = feature_names[:min_length]
-                    
-                    importance_df = pd.DataFrame({
-                        'feature': feature_names,
-                        'importance': feature_importance
-                    }).sort_values('importance', ascending=False)
-                    
-                    print(f"      Using ds_modeling wrapper feature importance")
-                elif hasattr(wrapped_model, 'get_booster'):
-                    # XGBoost wrapper
-                    booster = wrapped_model.get_booster()
-                    feature_scores = booster.get_score(importance_type='gain')
-                    
-                    feature_names = list(feature_scores.keys())
-                    feature_importance = list(feature_scores.values())
-                    
-                    importance_df = pd.DataFrame({
-                        'feature': feature_names,
-                        'importance': feature_importance
-                    }).sort_values('importance', ascending=False)
-                    
-                    print(f"      Using ds_modeling XGBoost wrapper 'gain' importance scores")
-                else:
-                    print(f"      ⚠️ ds_modeling wrapper model doesn't support feature importance")
-                    return None
-                    
-            except Exception as e:
-                print(f"      ⚠️ ds_modeling wrapper feature importance failed: {e}")
-                return None
             
-            # Print top 10 features
-            print(f"      Top 10 features by model importance:")
-            for i, (_, row) in enumerate(importance_df.head(10).iterrows()):
-                print(f"        {i+1:2d}. {row['feature']:<25} {row['importance']:.4f}")
+            print(f"\n🌳 FEATURE IMPORTANCE ANALYSIS - {pipeline_name.upper()}")
+            print("=" * 60)
+            print("Top 15 Most Important Features:")
+            print("-" * 60)
             
-            # Store results
-            importance_results = {
-                'feature_importance': importance_df,
-                'model': model
-            }
+            for idx, row in importance_df.head(15).iterrows():
+                print(f"{idx+1:2d}. {row['feature']:<30} {row['importance']:.4f}")
             
-            return importance_results
-        else:
-            print(f"      ⚠️ Model doesn't have feature_importances_ attribute")
-            return None
-        
+            print("-" * 60)
+            print(f"Total features analyzed: {len(importance_df)}")
+            
+            return importance_df
+            
     except Exception as e:
-        print(f"      ⚠️ Feature importance analysis failed: {e}")
+        print(f"⚠️ Could not analyze feature importance for {pipeline_name}: {e}")
         return None
 
+# ============================================================================
 
-def _aggregate_feature_importance_results(results):
-    """
-    Aggregate feature importance results across all folds for each pipeline
-    """
-    print("\n" + "="*80)
-    print("FEATURE IMPORTANCE ANALYSIS (Aggregated Across Folds)")
-    print("="*80)
+def print_final_comparison(results: dict[str, any]):
+    """Print final comparison of all pipelines."""
+    print("\n" + "=" * 80)
+    print("🏁 FINAL PIPELINE COMPARISON")
+    print("=" * 80)
     
-    for pipeline_name, pipeline_results in results.items():
-        # Check if this pipeline has feature importance results
-        fold_results = pipeline_results.get('fold_results', [])
-        importance_folds = [fold for fold in fold_results if 'importance_results' in fold]
-        
-        if not importance_folds:
-            continue
-        
-        print(f"\n🔍 {pipeline_name.upper()} - Feature Importance:")
-        print("-" * (len(pipeline_name) + 30))
-        
-        # Aggregate feature importance across folds
-        all_features = set()
-        feature_importance_sum = {}
-        feature_importance_count = {}
-        
-        for fold in importance_folds:
-            importance_results = fold['importance_results']
-            importance_df = importance_results['feature_importance']
-            
-            # Handle both DataFrame and numpy array formats
-            if hasattr(importance_df, 'iterrows'):
-                # DataFrame format
-                for _, row in importance_df.iterrows():
-                    feature = row['feature']
-                    importance = row['importance']
-            else:
-                # Numpy array format - convert to DataFrame first
-                feature_names = importance_results.get('feature_names', [f'feature_{i}' for i in range(len(importance_df))])
-                importance_df = pd.DataFrame({
-                    'feature': feature_names,
-                    'importance': importance_df
-                })
-                
-                for _, row in importance_df.iterrows():
-                    feature = row['feature']
-                    importance = row['importance']
-                
-                all_features.add(feature)
-                if feature not in feature_importance_sum:
-                    feature_importance_sum[feature] = 0
-                    feature_importance_count[feature] = 0
-                
-                feature_importance_sum[feature] += importance
-                feature_importance_count[feature] += 1
-        
-        # Calculate average importance across folds
-        avg_importance = {}
-        for feature in all_features:
-            if feature_importance_count[feature] > 0:
-                avg_importance[feature] = feature_importance_sum[feature] / feature_importance_count[feature]
-        
-        # Sort by average importance
-        sorted_features = sorted(avg_importance.items(), key=lambda x: x[1], reverse=True)
-        
-        # Display top 15 features
-        print(f"Top 15 features by average importance across {len(importance_folds)} folds:")
-        print(f"{'Rank':<4} {'Feature':<30} {'Avg Importance':<15} {'Folds':<8}")
-        print("-" * 60)
-        
-        for i, (feature, importance) in enumerate(sorted_features[:15]):
-            fold_count = feature_importance_count[feature]
-            print(f"{i+1:<4} {feature:<30} {importance:<15.4f} {fold_count:<8}")
-        
-        # Store aggregated results in pipeline results
-        pipeline_results['aggregated_importance'] = {
-            'feature_importance': sorted_features,
-            'fold_count': len(importance_folds),
-            'total_features': len(all_features)
-        }
-
-
-def time_series_cross_validation(
-    pipelines: List[BaseEstimator],
-    data: pd.DataFrame,
-    target_column: str,
-    date_column: str,
-    training_period: int,
-    test_days: int,
-    pipeline_names: List[str] = None
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Perform time series cross-validation on multiple sklearn pipelines.
-    """
-    
-    # Validate inputs
-    if target_column not in data.columns:
-        raise ValueError(f"Target column '{target_column}' not found in data")
-    if date_column not in data.columns:
-        raise ValueError(f"Date column '{date_column}' not found in data")
-    
-    # Convert date column to datetime if needed
-    data = data.copy()
-    data[date_column] = pd.to_datetime(data[date_column])
-    
-    # Sort data by date
-    data = data.sort_values(date_column).reset_index(drop=True)
-    
-    # Set pipeline names if not provided
-    if pipeline_names is None:
-        pipeline_names = [f"Pipeline_{i}" for i in range(len(pipelines))]
-    
-    if len(pipeline_names) != len(pipelines):
-        raise ValueError("Number of pipeline names must match number of pipelines")
-    
-    # Determine problem type (classification or regression)
-    target_type = type_of_target(data[target_column])
-    is_classification = target_type in ['binary', 'multiclass', 'multilabel-indicator']
-    
-    # Generate time series folds
-    folds = _generate_time_series_folds(data, date_column, training_period, test_days)
-    
-    if len(folds) == 0:
-        raise ValueError("No valid folds could be generated with the given parameters")
-    
-    print(f"Generated {len(folds)} folds for time series cross-validation")
-    print(f"Problem type detected: {'Classification' if is_classification else 'Regression'}")
-    
-    # Initialize results dictionary
-    results = {}
-    
-    # Evaluate each pipeline
-    for pipeline, pipeline_name in zip(pipelines, pipeline_names):
-        print(f"\n{'='*60}")
-        print(f"Evaluating {pipeline_name}")
-        print(f"{'='*60}")
-        
-        fold_results = []
-        fold_weights = []
-        
-        # Evaluate on each fold
-        for fold_idx, (train_start, train_end, test_end) in enumerate(folds):
-            print(f"  Fold {fold_idx + 1}/{len(folds)}")
-            
-            # Split data
-            train_data = data.iloc[train_start:train_end]
-            test_data = data.iloc[train_end:test_end]
-            
-            if len(train_data) == 0 or len(test_data) == 0:
-                print(f"    Skipping fold {fold_idx + 1} due to insufficient data")
-                continue
-            
-            # Prepare features and target
-            X_train = train_data.drop(columns=[target_column, date_column])
-            y_train = train_data[target_column]
-            X_test = test_data.drop(columns=[target_column, date_column])
-            y_test = test_data[target_column]
-            
-            # Print fold details
-            print(f"    Training: {len(train_data):,} rows ({train_data[date_column].min().strftime('%Y-%m-%d')} to {train_data[date_column].max().strftime('%Y-%m-%d')})")
-            print(f"    Testing: {len(test_data):,} rows ({test_data[date_column].min().strftime('%Y-%m-%d')} to {test_data[date_column].max().strftime('%Y-%m-%d')})")
-            print(f"    Sales in test: {y_test.sum():.1f}")
-            
-            try:
-                # Simple and clean approach - like your boss intended!
-                # Clone the pipeline for this fold
-                pipeline_clone = clone(pipeline)
-                
-                # Set model names for all transformers in the pipeline
-                if hasattr(pipeline_clone, 'named_steps'):
-                    for step_name, step in pipeline_clone.named_steps.items():
-                        if hasattr(step, 'set_model_name'):
-                            step.set_model_name(pipeline_name)
-                
-                # Fit the pipeline on training data
-                pipeline_clone.fit(X_train, y_train)
-                
-                # Make predictions using the fitted pipeline
-                y_pred = pipeline_clone.predict(X_test)
-                y_pred_proba = None
-                if hasattr(pipeline_clone, 'predict_proba'):
-                    y_pred_proba = pipeline_clone.predict_proba(X_test)
-                
-                # Get feature count from the fitted pipeline
-                try:
-                    # Get the transformed training data to see actual feature count
-                    X_train_transformed = pipeline_clone[:-1].transform(X_train)
-                    feature_count = X_train_transformed.shape[1]
-                except:
-                    # Fallback to original data count
-                    feature_count = X_train.shape[1]
-                
-                if 'old_model' in pipeline_name:
-                    print(f"    ✅ Model features: {feature_count} feature (p_sale only)")
-                else:
-                    print(f"    ✅ Model features: {feature_count} essential features (transformed by pipeline)")
-                
-                # Perform feature importance analysis for tree-based models (GB, RF, ROEI if tree-based)
-                importance_results = None
-                try:
-                    if hasattr(pipeline_clone, 'named_steps'):
-                        # Get the final model from the fitted pipeline
-                        final_model = pipeline_clone.named_steps[list(pipeline_clone.named_steps.keys())[-1]]
-                        if hasattr(final_model, 'feature_importances_'):
-                            feature_importance = final_model.feature_importances_
-                            # Get feature names from the transformed data
-                            try:
-                                X_train_transformed = pipeline_clone[:-1].transform(X_train)
-                                if hasattr(X_train_transformed, 'columns'):
-                                    feature_names = list(X_train_transformed.columns)
-                                else:
-                                    feature_names = [f'feature_{i}' for i in range(X_train_transformed.shape[1])]
-                            except:
-                                feature_names = [f'feature_{i}' for i in range(len(feature_importance))]
-                            
-                            importance_results = {
-                                'feature_importance': feature_importance,
-                                'feature_names': feature_names
-                            }
-                except Exception as e:
-                    print(f"    ⚠️ Feature importance analysis not available: {e}")
-                
-                # Calculate metrics using the predictions
-                if is_classification:
-                    fold_metrics = _calculate_classification_metrics(y_test, y_pred, y_pred_proba)
-                else:
-                    # For regression, you would implement regression metrics here
-                    fold_metrics = {}
-                
-                # Add feature importance results to fold metrics if available
-                if importance_results:
-                    fold_metrics['importance_results'] = importance_results
-                
-                # Store results
-                fold_results.append(fold_metrics)
-                fold_weights.append(len(test_data))
-                
-                # Reduced verbosity - only show fold completion
-                print(f"      ✅ Fold {fold_idx + 1} completed ({len(test_data)} samples)")
-                
-            except Exception as e:
-                print(f"    ❌ Error in fold {fold_idx + 1}: {e}")
-                import traceback
-                print(f"      Full traceback:")
-                traceback.print_exc()
-                continue
-        
-        if fold_results:
-            # Calculate weighted average metrics
-            weighted_avg = _calculate_weighted_average(fold_results, fold_weights)
-            
-            # Store results
-            results[pipeline_name] = {
-                'problem_type': 'classification' if is_classification else 'regression',
-                'fold_results': fold_results,
-                'fold_weights': fold_weights,
-                'weighted_average': weighted_avg
-            }
-            
-            print(f"  ✅ Completed {pipeline_name} with {len(fold_results)} valid folds")
-        else:
-            print(f"  ❌ No valid folds for {pipeline_name}")
-    
-    return results
-
-
-def print_results_summary(results: Dict[str, Dict[str, Any]]) -> None:
-    """Print a formatted summary of the cross-validation results."""
-    
-    print("\n" + "="*80)
-    print("TIME SERIES CROSS-VALIDATION RESULTS SUMMARY")
-    print("="*80)
-    
-    for pipeline_name, pipeline_results in results.items():
-        print(f"\n{pipeline_name}:")
-        print("-" * (len(pipeline_name) + 1))
-        
-        problem_type = pipeline_results['problem_type']
-        weighted_avg = pipeline_results['weighted_average']
-        
-        print(f"Problem Type: {problem_type.title()}")
-        print(f"Number of Folds: {weighted_avg.get('total_folds', 'N/A')}")
-        print(f"Total Test Samples: {weighted_avg.get('total_test_samples', 'N/A')}")
-        
-        print(f"\nWeighted Average Metrics:")
-        
-        if problem_type == 'classification':
-            print(f"  🎯 PROBABILITY-BASED METRICS (Main Business KPIs):")
-            prob_metrics = ['roc_auc', 'log_loss', 'brier_score', 'rmse_proba', 'r2_proba', 'ece']
-            for metric in prob_metrics:
-                value = weighted_avg.get(metric)
-                if value is not None:
-                    if metric in ['rmse_proba', 'r2_proba']:
-                        print(f"    {metric}: {value:.4f}")
-                    else:
-                        print(f"    {metric}: {value:.4f}")
-                else:
-                    print(f"    {metric}: N/A")
-            
-            print(f"  📊 BUSINESS VOLUME METRICS:")
-            business_metrics = ['total_sales', 'total_pred_sales', 'total_leads', 'total_pred_leads', 'sales_ratio', 'leads_ratio']
-            for metric in business_metrics:
-                value = weighted_avg.get(metric)
-                if value is not None:
-                    if metric in ['sales_ratio', 'leads_ratio']:
-                        print(f"    {metric}: {value:.4f}")
-                    else:
-                        print(f"    {metric}: {value:.0f}")
-                else:
-                    print(f"    {metric}: N/A")
-            
-            print(f"\n  Note: CLASSIFICATION METRICS (Not Focus KPIs - We Use Probabilities):")
-            print(f"     These metrics require hard predictions (0/1), not probability scores.")
-            print(f"     For business decisions, focus on probability-based metrics above.")
-            print(f"  Default Threshold (0.5) Metrics:")
-            default_metrics = ['accuracy', 'balanced_accuracy', 'f1_score', 'precision', 'recall']
-            for metric in default_metrics:
-                value = weighted_avg.get(metric)
-                if value is not None:
-                    print(f"    {metric}: {value:.4f}")
-                else:
-                    print(f"    {metric}: N/A")
-            
-            print(f"  Optimal Threshold Metrics:")
-            optimal_metrics = ['f1_optimal', 'precision_optimal', 'recall_optimal', 'accuracy_optimal', 'optimal_threshold']
-            for metric in optimal_metrics:
-                value = weighted_avg.get(metric)
-                if value is not None:
-                    if metric == 'optimal_threshold':
-                        print(f"    {metric}: {value:.3f}")
-                    else:
-                        print(f"    {metric}: {value:.4f}")
-                else:
-                    print(f"    {metric}: N/A")
-        else:
-            # Regression metrics
-            print(f"  Regression Metrics:")
-            reg_metrics = ['rmse', 'mae', 'r2', 'mape', 'medae', 'explained_variance']
-            for metric in reg_metrics:
-                value = weighted_avg.get(metric)
-                if value is not None:
-                    print(f"    {metric}: {value:.4f}")
-                else:
-                    print(f"    {metric}: N/A")
-
-
-def run_time_series_cv(df, pipelines, target_column='sales_count', date_column='clickout_date_prt'):
-    """
-    Run time series cross-validation on Biz2Credit data
-    """
-    print("=" * 60)
-    print("TIME SERIES CROSS-VALIDATION")
-    print("=" * 60)
-    
-    # Business rule: Remove rows where all enrichment features are null
-    # This ensures consistent sample counts across folds
-    enrichment_features = ['age_of_business_months', 'application_annual_revenue', 'business_legal_structure']
-    available_enrichment = [f for f in enrichment_features if f in df.columns]
-    
-    if available_enrichment:
-        before_count = len(df)
-        
-        # Check if all enrichment features are null for each row
-        all_null_mask = df[available_enrichment].isnull().all(axis=1)
-        df_filtered = df[~all_null_mask].copy()
-        
-        removed_count = before_count - len(df_filtered)
-        
-        print(f"📊 Data Filtering:")
-        print(f"  Before filtering: {before_count:,} rows")
-        print(f"  After filtering: {len(df_filtered):,} rows")
-        print(f"  Rows removed: {removed_count:,} ({removed_count/before_count*100:.1f}%)")
-        print(f"  Reason: Removed rows where ALL enrichment features are null")
-        
-        df = df_filtered
-    
-    # Time series CV parameters
-    training_period = 90  # 30 days for training
-    test_days = 7        # 7 days (1 week) for testing
-    
-    print(f"📅 Time Series CV Parameters:")
-    print(f"  Training period: {training_period} days")
-    print(f"  Test period: {test_days} days")
-    print(f"  Data shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
-    print(f"  Date range: {df[date_column].min()} to {df[date_column].max()}")
-    print(f"  Note: Test size = {test_days} days, not {test_days} rows")
-    
-    try:
-        # Run time series cross-validation
-        results = time_series_cross_validation(
-            pipelines=list(pipelines.values()),
-            data=df,
-            target_column=target_column,
-            date_column=date_column,
-            training_period=training_period,
-            test_days=test_days,
-            pipeline_names=list(pipelines.keys())
-        )
-        
-        if results:
-            print("\n" + "="*60)
-            print("CROSS-VALIDATION COMPLETED SUCCESSFULLY")
-            print("="*60)
-            
-            # Print results summary
-            print_results_summary(results)
-            
-            # Select best pipeline
-            best_pipeline_name = select_best_pipeline_from_cv(results)
-            
-            return results, best_pipeline_name
-        else:
-            print("❌ No results from cross-validation")
-            return None, None
-            
-    except Exception as e:
-        print(f"❌ Time series CV failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return None, None
-
-
-def select_best_pipeline_from_cv(cv_results):
-    """
-    Select best pipeline from CV results based on ROC AUC
-    """
-    print("\n=== SELECTING BEST PIPELINE FROM CV (by roc_auc) ===")
-    
-    best_pipeline = None
-    best_score = -1
-    
-    for pipeline_name, results in cv_results.items():
-        roc_auc = results['weighted_average'].get('roc_auc')
-        if roc_auc is not None and roc_auc > best_score:
-            best_score = roc_auc
-            best_pipeline = pipeline_name
-    
-    if best_pipeline:
-        print(f"🏆 Best pipeline: {best_pipeline}")
-        print(f"Best roc_auc: {best_score:.4f}")
-    else:
-        print("❌ No valid pipelines found")
-    
-    return best_pipeline
-
-
-def print_pipeline_comparison_chart(cv_results):
-    """
-    Print a nice comparison chart of all pipeline results
-    """
-    print("\n" + "="*100)
-    print("📊 PIPELINE PERFORMANCE COMPARISON CHART")
-    print("="*100)
-    
-    # Define feature descriptions for each pipeline
-    feature_descriptions = {
-        'biz2credit_rf_1': '14+ enriched features',
-        'biz2credit_gb_1': '14+ enriched features', 
-        'biz2credit_gb_2': '11 core business features',
-        'biz2credit_lr_1': '14+ enriched features',
-        'old_model_pipeline': 'Only p_sale',
-        'roei_pipeline': 'Manager\'s basic features'
-    }
-    
-    # Print header
-    print(f"{'Pipeline':<25} {'ROC AUC':<10} {'Log Loss':<10} {'R²':<8} {'RMSE':<8} {'ECE':<8} {'Features':<20}")
-    print("-" * 100)
-    
-    # Sort pipelines by ROC AUC (descending)
+    # Sort pipelines by RMSE (lower is better, so reverse=False)
     sorted_pipelines = sorted(
-        cv_results.items(),
-        key=lambda x: x[1]['weighted_average'].get('roc_auc', 0),
-        reverse=True
+        [(name, results[name]) for name in results.keys() if results[name] and 'weighted_average' in results[name]],
+        key=lambda x: x[1]['weighted_average'].get('rmse_proba', float('inf')),
+        reverse=False
     )
     
-    # Add medals and rankings
-    medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
+    if not sorted_pipelines:
+        print("❌ No valid results to compare")
+        return
     
-    for idx, (pipeline_name, results) in enumerate(sorted_pipelines):
+    # Print header
+    print(f"{'Pipeline':<25} {'ROC AUC':<10} {'Log Loss':<10} {'R²':<8} {'RMSE':<8} {'ECE':<8}")
+    print("-" * 80)
+    
+    # Print results with medals
+    medals = ['1', '2', '3', '4','5']
+    
+    for idx, (pipeline_name, result) in enumerate(sorted_pipelines):
+        metrics = result['weighted_average']
+        
         if idx < len(medals):
             medal = medals[idx]
         else:
             medal = f"{idx+1}️⃣"
         
-        # Get metrics
-        roc_auc = results['weighted_average'].get('roc_auc', 'N/A')
-        log_loss = results['weighted_average'].get('log_loss', 'N/A')
-        r2_proba = results['weighted_average'].get('r2_proba', 'N/A')
-        rmse_proba = results['weighted_average'].get('rmse_proba', 'N/A')
-        ece = results['weighted_average'].get('ece', 'N/A')
-        features = feature_descriptions.get(pipeline_name, 'Unknown')
+        roc_auc = metrics.get('roc_auc')
+        log_loss = metrics.get('log_loss')
+        r2 = metrics.get('r2_proba')
+        rmse = metrics.get('rmse_proba')
+        ece = metrics.get('ece')
         
-        # Format metrics
-        roc_auc_str = f"{roc_auc:.4f}" if isinstance(roc_auc, (int, float)) else str(roc_auc)
-        log_loss_str = f"{log_loss:.4f}" if isinstance(log_loss, (int, float)) else str(log_loss)
-        r2_str = f"{r2_proba:.4f}" if isinstance(r2_proba, (int, float)) else str(r2_proba)
-        rmse_str = f"{rmse_proba:.4f}" if isinstance(rmse_proba, (int, float)) else str(rmse_proba)
-        ece_str = f"{ece:.4f}" if isinstance(ece, (int, float)) else str(ece)
+        # Format metrics safely
+        roc_auc_str = f"{roc_auc:.4f}" if roc_auc is not None else "N/A"
+        log_loss_str = f"{log_loss:.4f}" if log_loss is not None else "N/A"
+        r2_str = f"{r2:.4f}" if r2 is not None else "N/A"
+        rmse_str = f"{rmse:.4f}" if rmse is not None else "N/A"
+        ece_str = f"{ece:.4f}" if ece is not None else "N/A"
         
-        # Print row
-        print(f"{medal} {pipeline_name:<20} {roc_auc_str:<10} {log_loss_str:<10} {r2_str:<8} {rmse_str:<8} {ece_str:<8} {features:<20}")
+        print(f"{medal} {pipeline_name:<22} {roc_auc_str:<10} {log_loss_str:<10} {r2_str:<8} {rmse_str:<8} {ece_str:<8}")
     
-    print("-" * 100)
-    print("Note: Lower values are better for Log Loss, RMSE, and ECE. Higher values are better for ROC AUC and R².")
-    print("="*100)
-
-
-def print_detailed_ece_analysis(cv_results, pipeline_names=None):
-    """
-    Print detailed ECE analysis for specified pipelines
-    """
-    if pipeline_names is None:
-        pipeline_names = ['biz2credit_gb_1', 'biz2credit_gb_2', 'roei_pipeline']
-    
-    print("\n" + "="*100)
-    print("🔍 DETAILED ECE (Expected Calibration Error) ANALYSIS")
-    print("="*100)
-    
-    for pipeline_name in pipeline_names:
-        if pipeline_name in cv_results:
-            print(f"\n📊 {pipeline_name.upper()}")
-            print("-" * 60)
-            
-            # Get fold results
-            fold_results = cv_results[pipeline_name]['fold_results']
-            fold_weights = cv_results[pipeline_name]['fold_weights']
-            
-            print(f"Total Folds: {len(fold_results)}")
-            print(f"Fold Weights (test set sizes): {fold_weights}")
-            print(f"Total Test Samples: {sum(fold_weights):,}")
-            
-            # Calculate weighted ECE across folds
-            total_weighted_ece = 0
-            total_weight = 0
-            calibration_details_all = []
-            
-            for fold_idx, (fold_result, weight) in enumerate(zip(fold_results, fold_weights)):
-                if 'calibration_details' in fold_result and fold_result['calibration_details']:
-                    ece = fold_result['calibration_details']['ece']
-                    prob_true = fold_result['calibration_details']['prob_true']
-                    prob_pred = fold_result['calibration_details']['prob_pred']
-                    
-                    total_weighted_ece += ece * weight
-                    total_weight += weight
-                    
-                    # Store calibration details for this fold
-                    calibration_details_all.append({
-                        'fold': fold_idx + 1,
-                        'weight': weight,
-                        'ece': ece,
-                        'prob_true': prob_true,
-                        'prob_pred': prob_pred
-                    })
-                    
-                    print(f"\n  Fold {fold_idx + 1} (Weight: {weight:,} samples):")
-                    print(f"    ECE: {ece:.4f}")
-                    
-                    # Show detailed L2S comparison analysis
-                    if 'bin_metrics' in fold_result and fold_result['bin_metrics']:
-                        print(f"    L2S Comparison Analysis (Predicted p_sale vs Actual Sales/Leads):")
-                        print(f"      Bin Range    | Samples | Sales | Pred p_sale | Actual L2S | Difference")
-                        print(f"      {'-' * 75}")
-                        
-                        for bm in fold_result['bin_metrics']:
-                            print(f"      {bm['bin_range']:11} | {bm['bin_samples']:6d} | {bm['bin_sales']:5d} | {bm['bin_pred_prob']:11.3f} | {bm['bin_actual_l2s']:11.3f} | {bm['l2s_comparison']:10.3f}")
-                        
-                        # Show summary
-                        total_samples = sum(bm['bin_samples'] for bm in fold_result['bin_metrics'])
-                        total_sales = sum(bm['bin_sales'] for bm in fold_result['bin_metrics'])
-                        overall_l2s = total_sales / total_samples if total_samples > 0 else 0
-                        print(f"\n    Summary: {total_samples:,} samples, {total_sales:,} sales, Overall L2S Rate: {overall_l2s:.3f}")
-                    else:
-                        # Fallback to standard calibration curve
-                        print(f"    Calibration Curve (10 bins):")
-                        print(f"      Predicted Prob | Actual Prob | Difference")
-                        print(f"      {'-' * 40}")
-                        
-                        for i in range(len(prob_true)):
-                            diff = abs(prob_true[i] - prob_pred[i])
-                            print(f"      {prob_pred[i]:.3f}        | {prob_true[i]:.3f}      | {diff:.3f}")
-            
-            if total_weight > 0:
-                weighted_ece = total_weighted_ece / total_weight
-                print(f"\n  🎯 WEIGHTED ECE ACROSS ALL FOLDS: {weighted_ece:.4f}")
-                print(f"     (Weighted by test set size - larger test sets have more influence)")
-                
-
-                
-                # Show overall calibration curve
-                if calibration_details_all:
-                    print(f"\n  📈 OVERALL CALIBRATION ANALYSIS:")
-                    print(f"     ECE measures how well predicted probabilities match actual outcomes")
-                    print(f"     Lower ECE = Better calibration (predicted ≈ actual)")
-                    print(f"     ECE = 0 means perfect calibration")
-                    print(f"     ECE = 1 means worst possible calibration")
-                    
-                    # Aggregate calibration details across all folds
-                    try:
-                        # Check if all calibration details have the same shape
-                        shapes = [len(cd['prob_true']) for cd in calibration_details_all if cd is not None]
-                        if len(set(shapes)) > 1:
-                            print(f"  ⚠️ Warning: Inconsistent calibration bin counts across folds")
-                            print(f"     Fold shapes: {shapes}")
-                            print(f"     Using median shape for aggregation")
-                            # Use median shape to avoid errors
-                            median_shape = int(np.median(shapes))
-                            # Pad or truncate calibration details to median shape
-                            for cd in calibration_details_all:
-                                if cd is not None:
-                                    if len(cd['prob_true']) > median_shape:
-                                        cd['prob_true'] = cd['prob_true'][:median_shape]
-                                        cd['prob_pred'] = cd['prob_pred'][:median_shape]
-                                    elif len(cd['prob_true']) < median_shape:
-                                        # Pad with last values
-                                        last_prob_true = cd['prob_true'][-1] if len(cd['prob_true']) > 0 else 0.5
-                                        last_prob_pred = cd['prob_pred'][-1] if len(cd['prob_pred']) > 0 else 0.5
-                                        cd['prob_true'] = np.pad(cd['prob_true'], (0, median_shape - len(cd['prob_true'])), mode='edge')
-                                        cd['prob_pred'] = np.pad(cd['prob_pred'], (0, median_shape - len(cd['prob_pred'])), mode='edge')
-                        
-                        # Now aggregate with consistent shapes
-                        avg_prob_true = np.mean([cd['prob_true'] for cd in calibration_details_all], axis=0)
-                        avg_prob_pred = np.mean([cd['prob_pred'] for cd in calibration_details_all], axis=0)
-                        
-                        print(f"\n     Average Calibration Curve Across Folds:")
-                        print(f"       Predicted Prob | Actual Prob | Difference")
-                        print(f"       {'-' * 40}")
-                        
-                        for i in range(len(avg_prob_true)):
-                            diff = abs(avg_prob_true[i] - avg_prob_pred[i])
-                            print(f"       {avg_prob_pred[i]:.3f}        | {avg_prob_true[i]:.3f}      | {diff:.3f}")
-                    
-                    except Exception as e:
-                        print(f"  ❌ Error aggregating calibration curves: {e}")
-                        print(f"     Showing individual fold results instead")
-                        # Fallback to showing individual fold results
-                        for i, cd in enumerate(calibration_details_all):
-                            if cd is not None:
-                                print(f"  📊 Fold {i+1} Calibration:")
-                                print(f"     Bins: {len(cd['prob_true'])}")
-                                for j in range(len(cd['prob_true'])):
-                                    print(f"     {cd['prob_pred'][j]:.3f} | {cd['prob_true'][j]:.3f}")
-                                print()
-                else:
-                    print("  ⚠️ No calibration details available for this pipeline")
-
-
-def create_simple_visualizations(cv_results, best_pipeline_name):
-    """
-    Create simple visualizations for modeling stage
-    """
-    try:
-        import matplotlib.pyplot as plt
-        
-        print("\n📊 CREATING SIMPLE VISUALIZATIONS...")
-        
-        # 1. ROC AUC comparison bar chart
-        plt.figure(figsize=(12, 6))
-        
-        pipeline_names = []
-        roc_aucs = []
-        
-        for pipeline_name, results in cv_results.items():
-            if 'roc_auc' in results['weighted_average']:
-                pipeline_names.append(pipeline_name)
-                roc_aucs.append(results['weighted_average']['roc_auc'])
-        
-        if roc_aucs:
-            bars = plt.bar(pipeline_names, roc_aucs, alpha=0.7, color='lightblue')
-            plt.title('ROC AUC Comparison Across All Models', fontsize=16, fontweight='bold')
-            plt.xlabel('Pipeline')
-            plt.ylabel('ROC AUC')
-            plt.xticks(rotation=45, ha='right')
-            plt.grid(True, alpha=0.3)
-            
-            # Add value labels on bars
-            for bar, value in zip(bars, roc_aucs):
-                plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-                        f'{value:.3f}', ha='center', va='bottom', fontweight='bold')
-            
-            plt.tight_layout()
-            plt.savefig('roc_auc_comparison.png', dpi=300, bbox_inches='tight')
-            print("✅ ROC AUC comparison saved as 'roc_auc_comparison.png'")
-        
-        print("✅ Simple visualizations completed!")
-        
-    except ImportError:
-        print("⚠️ matplotlib not available - skipping visualizations")
-    except Exception as e:
-        print(f"⚠️ Error creating visualizations: {e}")
-
+    print("-" * 80)
+    print("📊 Lower values are better for Log Loss, RMSE, and ECE")
+    print("🎯 Higher values are better for ROC AUC and R²")
+    print("🏆 Models are ranked by RMSE (lower = better)")
 
 # ============================================================================
-# MAIN ANALYSIS FUNCTION
-# ============================================================================
-
-def run_biz2credit_analysis(df, pipelines, target_column='sales_count'):
-    """
-    Main function to run complete Biz2Credit analysis
-    """
-    print("🚀 Starting Biz2Credit Analysis")
-    print("=" * 60)
-    
-    # Stage 1: Pre-analysis
-    print("\n" + "="*60)
-    print("STAGE 1: PRE-ANALYSIS")
-    print("="*60)
-    null_df, enrichment_features = run_pre_analysis(df)
-    
-    # Stage 2: Raw feature analysis (disabled for performance)
-    print("\n" + "="*60)
-    print("STAGE 2: FEATURE ANALYSIS")
-    print("="*60)
-    print("Feature analysis disabled for performance")
-    print("New features added: network (one-hot), time_to_clickout_S, time_to_clickout_S_group (dummies)")
-    
-    # Stage 3: Pipeline creation (no output needed)
-    if not pipelines:
-        # This section is removed as per the edit hint.
-        # The pipeline creation logic should be handled by the pipeline file.
-        print("❌ No pipelines provided. Please ensure pipelines are created and passed.")
-        return None
-    
-    # Stage 4: Time series cross-validation
-    print("\n" + "="*60)
-    print("STAGE 4: TIME SERIES CROSS-VALIDATION")
-    print("="*60)
-    results, best_pipeline_name = run_time_series_cv(df, pipelines, target_column)
-    
-    if not results:
-        print("❌ Cross-validation failed")
-        return None
-    
-    # Print comparison chart
-    print_pipeline_comparison_chart(results)
-    
-    # Stage 5: Detailed ECE Analysis
-    print_detailed_ece_analysis(results, ['biz2credit_gb_1', 'biz2credit_gb_2', 'roei_pipeline'])
-    
-    # Stage 6: Feature Importance Analysis
-    print("\n" + "="*60)
-    print("STAGE 5: FEATURE IMPORTANCE ANALYSIS")
-    print("="*60)
-    _aggregate_feature_importance_results(results)
-    
-    # Stage 6: Feature analysis (transformed features)
-    print("\n" + "="*60)
-    print("STAGE 6: FEATURE ANALYSIS (Transformed Features)")
-    print("="*60)
-    print("Feature analysis completed during pipeline execution")
-    
-    # Stage 6: Create visualizations
-    print("\n" + "="*60)
-    print("STAGE 6: CREATING VISUALIZATIONS")
-    print("="*60)
-    
-    # Create simple visualizations
-    if best_pipeline_name:
-        create_simple_visualizations(results, best_pipeline_name)
-    
-    # Final summary
-    print("\n" + "="*60)
-    print("FINAL EVALUATION REPORT")
-    print("="*60)
-    
-    # Show sales coverage summary
-    print("📊 SALES COVERAGE SUMMARY:")
-    total_dataset_sales = df[target_column].sum()
-    print(f"  Total dataset sales: {total_dataset_sales:.0f}")
-    
-    for pipeline_name, result in results.items():
-        if 'weighted_average' in result and 'total_sales' in result['weighted_average']:
-            test_sales = result['weighted_average']['total_sales']
-            if test_sales is not None:
-                coverage = (test_sales / total_dataset_sales) * 100
-                print(f"  {pipeline_name}: {test_sales:.0f} sales ({coverage:.1f}% coverage)")
-    
-    if best_pipeline_name:
-        best_result = results[best_pipeline_name]
-        print(f"\n🏆 Best Pipeline: {best_pipeline_name}")
-        print("Cross-Validation Results:")
-        print(f"  Number of Folds: {len(best_result['fold_results'])}")
-        print(f"  Total Test Samples: {best_result['weighted_average'].get('total_test_samples', 'N/A')}")
-        print(f"  ROC AUC: {best_result['weighted_average'].get('roc_auc', 'N/A'):.4f}")
-        print(f"  Accuracy: {best_result['weighted_average'].get('accuracy', 'N/A'):.4f}")
-        print(f"  F1 Score: {best_result['weighted_average'].get('f1_score', 'N/A'):.4f}")
-    
-    print("\n🎉 Time Series Cross-Validation completed successfully!")
-    print(f"Results available for {len(results)} pipelines")
-    
-    return results

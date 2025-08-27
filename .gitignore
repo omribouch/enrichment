@@ -1,0 +1,17 @@
+.idea
+.ipynb_checkpoints
+target/
+*__pycache__*
+.ds_store*
+venv/*
+*temp_*
+/.run/
+**/cachedir/
+/.coverage
+**/.cache/
+.vscode/*
+.vscode/launch.json
+/coverage.json
+.history
+.cursor/*
+.envrc
